@@ -1,0 +1,44 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function role() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    function isStaff() {
+      return isSignedIn() && (role() == 'admin' || role() == 'staff');
+    }
+
+    // メニュー: 誰でも閲覧可。書き込みは管理者のみ（通常はサーバー/コンソールから）
+    match /menu/{id} {
+      allow read: if true;
+      allow write: if isSignedIn() && role() == 'admin';
+    }
+
+    // ユーザー: 本人のみ読み取り。roleの自己昇格を防ぐため書き込みはサーバー(Admin SDK)経由のみ
+    match /users/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      // 初回作成のみ許可（roleはstudent固定）。以後の更新はAdmin SDKで。
+      allow create: if isSignedIn()
+        && request.auth.uid == uid
+        && request.resource.data.role == 'student';
+      allow update, delete: if false;
+    }
+
+    // 注文: 本人は自分の注文を読める。スタッフは全件読める。
+    // 書き込みはすべてサーバー(Admin SDK)経由のみ。クライアントからの直接書き込みは禁止。
+    match /orders/{id} {
+      allow read: if isSignedIn()
+        && (resource.data.userId == request.auth.uid || isStaff());
+      allow write: if false;
+    }
+
+    // 採番カウンター: サーバー専用
+    match /dailyCounters/{id} {
+      allow read, write: if false;
+    }
+  }
+}
